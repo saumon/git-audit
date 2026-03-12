@@ -339,9 +339,95 @@ while [[ ! "$cur" > "$UNTIL" ]]; do
 done
 
 ###############################################################################
-# 4. AUTHORDATE vs COMMITDATE DISCREPANCY
+# 4. COMBINED DAY-BY-DAY ACTIVITY (AuthorDate + CommitDate)
 ###############################################################################
-section "4. AUTHORDATE vs COMMITDATE DISCREPANCY"
+section "4. COMBINED DAY-BY-DAY ACTIVITY (AuthorDate + CommitDate)"
+
+echo
+echo "  A day is marked active if ANY commit has its AuthorDate OR CommitDate"
+echo "  on that day. This gives the broadest (most favorable) view of activity."
+echo
+echo "  Source legend:  AD = AuthorDate only  CD = CommitDate only  AD+CD = both"
+echo
+echo "  ✅ active working day    ❌ inactive working day"
+echo "  ⚠️  weekend activity      ·  weekend (no activity)"
+echo
+
+# Build per-day summary from AuthorDate
+awk -F'\t' '{
+  day = substr($1,1,10)
+  n[day]++; ins[day]+=$10; del[day]+=$11; files[day]+=$9
+}' "$WORK/ad_e.tsv"
+
+# Build per-day summary from CommitDate
+awk -F'\t' '{
+  day = substr($2,1,10)
+  n[day]++; ins[day]+=$10; del[day]+=$11; files[day]+=$9
+}' "$WORK/cd_e.tsv"
+
+# Build combined per-day data using awk on both files
+awk -F'\t' -v s="$SINCE" -v u="$UNTIL" '
+  FILENAME==ARGV[1] {
+    day = substr($1,1,10)
+    if (day>=s && day<=u) { ad_n[day]++; ad_ins[day]+=$10; ad_del[day]+=$11; ad_f[day]+=$9 }
+  }
+  FILENAME==ARGV[2] {
+    day = substr($2,1,10)
+    if (day>=s && day<=u) { cd_n[day]++; cd_ins[day]+=$10; cd_del[day]+=$11; cd_f[day]+=$9 }
+  }
+  END {
+    for (d in ad_n) days[d]=1
+    for (d in cd_n) days[d]=1
+    for (d in days) {
+      an = ad_n[d]+0; cn = cd_n[d]+0
+      if (an>0 && cn>0) src = "AD+CD"
+      else if (an>0)    src = "AD"
+      else              src = "CD"
+      # Use max of AD/CD for stats (avoid double-counting)
+      ti = (ad_ins[d]+0 > cd_ins[d]+0) ? ad_ins[d]+0 : cd_ins[d]+0
+      td = (ad_del[d]+0 > cd_del[d]+0) ? ad_del[d]+0 : cd_del[d]+0
+      tf = (ad_f[d]+0 > cd_f[d]+0) ? ad_f[d]+0 : cd_f[d]+0
+      tn = (an > cn) ? an : cn
+      printf "%s\t%d\t%d\t%d\t%d\t%s\n", d, tn, ti, td, tf, src
+    }
+  }
+' "$WORK/ad_e.tsv" "$WORK/cd_e.tsv" | sort > "$WORK/daily_combined.tsv"
+
+ACTIVE_COMBINED=$(wc -l < "$WORK/daily_combined.tsv")
+COVERAGE_COMBINED=$(awk "BEGIN{if($WORK_DAYS>0) printf \"%.1f%%\",$ACTIVE_COMBINED/$WORK_DAYS*100; else print \"N/A\"}")
+
+echo "  Combined active days: $ACTIVE_COMBINED / $WORK_DAYS working days ($COVERAGE_COMBINED)"
+echo "  (vs AuthorDate only: $ACTIVE_AD days, CommitDate only: $ACTIVE_CD days)"
+echo
+
+cur="$SINCE"
+while [[ ! "$cur" > "$UNTIL" ]]; do
+  dow=$(date -d "$cur" +%u)
+  dow_name=$(date -d "$cur" +%a)
+  is_we=$( [[ $dow -ge 6 ]] && echo 1 || echo 0 )
+
+  line=$(grep "^${cur}	" "$WORK/daily_combined.tsv" 2>/dev/null || true)
+
+  if [[ -n "$line" ]]; then
+    IFS=$'\t' read -r _ nc ni nd nf src <<< "$line"
+    icon=$( [[ $is_we -eq 1 ]] && echo "⚠️ " || echo "✅" )
+    printf "  %s (%s)  %s  %2d commits  |  +%-6d -%-6d  |  %3d files  |  %-5s\n" \
+      "$cur" "$dow_name" "$icon" "$nc" "$ni" "$nd" "$nf" "$src"
+  else
+    if [[ $is_we -eq 1 ]]; then
+      printf "  %s (%s)   ·\n" "$cur" "$dow_name"
+    else
+      printf "  %s (%s)  ❌  no activity\n" "$cur" "$dow_name"
+    fi
+  fi
+
+  cur=$(date -d "$cur + 1 day" +%Y-%m-%d)
+done
+
+###############################################################################
+# 5. AUTHORDATE vs COMMITDATE DISCREPANCY
+###############################################################################
+section "5. AUTHORDATE vs COMMITDATE DISCREPANCY"
 
 echo
 echo "  Commits where AuthorDate ≠ CommitDate indicate history rewriting:"
@@ -390,9 +476,9 @@ END {
 }' "$WORK/union_e.tsv"
 
 ###############################################################################
-# 5. CROSS-RANGE COMMITS
+# 6. CROSS-RANGE COMMITS
 ###############################################################################
-section "5. CROSS-RANGE COMMITS"
+section "6. CROSS-RANGE COMMITS"
 
 echo
 echo "  Commits where only one date (AuthorDate or CommitDate) falls within"
@@ -400,7 +486,7 @@ echo "  the audit period. These reveal code flow across the period boundary."
 echo
 
 # A) AuthorDate IN range, CommitDate OUTSIDE → written during period, committed later
-subsection "5a. Authored in range, committed OUTSIDE range"
+subsection "6a. Authored in range, committed OUTSIDE range"
 echo "  (Code written during the audit period but rebased/amended/committed later)"
 echo
 awk -F'\t' -v s="$SINCE" -v u="$UNTIL" '
@@ -417,7 +503,7 @@ awk -F'\t' -v s="$SINCE" -v u="$UNTIL" '
 ' "$WORK/union_e.tsv"
 
 # B) CommitDate IN range, AuthorDate OUTSIDE → written outside period, committed during it
-subsection "5b. Committed in range, authored OUTSIDE range"
+subsection "6b. Committed in range, authored OUTSIDE range"
 echo "  (Code NOT written during the audit period, but recorded via rebase/"
 echo "   cherry-pick/amend as if it were — potential red flag)"
 echo
@@ -435,9 +521,9 @@ awk -F'\t' -v s="$SINCE" -v u="$UNTIL" '
 ' "$WORK/union_e.tsv"
 
 ###############################################################################
-# 6. HOURLY ACTIVITY HEATMAP (AuthorDate)
+# 7. HOURLY ACTIVITY HEATMAP (AuthorDate)
 ###############################################################################
-section "6. HOURLY ACTIVITY HEATMAP (AuthorDate)"
+section "7. HOURLY ACTIVITY HEATMAP (AuthorDate)"
 
 echo
 echo "  Distribution of commits by hour of day (author's local time)."
@@ -463,9 +549,9 @@ awk -F'\t' -v maxc="$MAX_H" '
 ' "$WORK/ad.tsv"
 
 ###############################################################################
-# 7. WEEKEND & OFF-HOURS ACTIVITY
+# 8. WEEKEND & OFF-HOURS ACTIVITY
 ###############################################################################
-section "7. WEEKEND & OFF-HOURS ACTIVITY"
+section "8. WEEKEND & OFF-HOURS ACTIVITY"
 
 echo
 echo "  Commits outside typical working hours (before 08:00 or after 20:00)"
@@ -501,9 +587,9 @@ awk -F'\t' '
 ' "$WORK/dow.tsv" "$WORK/ad.tsv"
 
 ###############################################################################
-# 8. MERGE COMMITS
+# 9. MERGE COMMITS
 ###############################################################################
-section "8. MERGE COMMITS"
+section "9. MERGE COMMITS"
 
 echo
 if [[ $MERGES -eq 0 ]]; then
@@ -522,9 +608,9 @@ else
 fi
 
 ###############################################################################
-# 9. BRANCH ACTIVITY
+# 10. BRANCH ACTIVITY
 ###############################################################################
-section "9. BRANCH ACTIVITY"
+section "10. BRANCH ACTIVITY"
 
 echo
 echo "  Branches containing commits by this author in the audit period."
@@ -543,9 +629,9 @@ awk -F'\t' '
 ' "$WORK/hashes_ad.txt" "$WORK/sources.tsv" | sort -t$'\t' -k2 -rn
 
 ###############################################################################
-# 10. TOP FILES MODIFIED
+# 11. TOP FILES MODIFIED
 ###############################################################################
-section "10. TOP 30 FILES MODIFIED"
+section "11. TOP 30 FILES MODIFIED"
 
 echo
 git log --all \
@@ -568,9 +654,9 @@ git log --all \
 done
 
 ###############################################################################
-# 11. DETAILED COMMIT LOG
+# 12. DETAILED COMMIT LOG
 ###############################################################################
-section "11. DETAILED COMMIT LOG (by AuthorDate)"
+section "12. DETAILED COMMIT LOG (by AuthorDate)"
 
 echo
 printf "  %-10s  %-12s %-7s  %-12s %-7s  %6s  %6s  %s\n" \
@@ -585,9 +671,9 @@ awk -F'\t' '{
 }' "$WORK/ad_e.tsv"
 
 ###############################################################################
-# 12. INACTIVE DAYS SUMMARY
+# 13. INACTIVE DAYS SUMMARY
 ###############################################################################
-section "12. INACTIVE WORKING DAYS"
+section "13. INACTIVE WORKING DAYS"
 
 echo
 echo "  Working days (Mon–Fri) with NO commits (by AuthorDate)."
