@@ -707,17 +707,22 @@ awk -F'\t' '{
 section "13. INACTIVE WORKING DAYS"
 
 echo
-echo "  Working days (Mon–Fri) with NO commits (by AuthorDate)."
+echo "  Working days (Mon–Fri) with NO commits by AuthorDate AND no commits"
+echo "  by CommitDate. This is the most favorable view (combined coverage)."
 echo
 
-awk -F'\t' '{print substr($1,1,10)}' "$WORK/ad.tsv" | sort -u > "$WORK/active_ad.txt"
+# Combine active days from both AuthorDate and CommitDate
+{
+  awk -F'\t' '{print substr($1,1,10)}' "$WORK/ad.tsv"
+  awk -F'\t' '{print substr($2,1,10)}' "$WORK/cd.tsv"
+} | sort -u > "$WORK/active_combined.txt"
 
 INACTIVE_COUNT=0
 cur="$SINCE"
 while [[ ! "$cur" > "$UNTIL" ]]; do
   dow=$(date -d "$cur" +%u)
   if [[ $dow -le 5 ]]; then
-    if ! grep -qx "$cur" "$WORK/active_ad.txt" 2>/dev/null; then
+    if ! grep -qx "$cur" "$WORK/active_combined.txt" 2>/dev/null; then
       printf "  %s (%s)\n" "$cur" "$(date -d "$cur" +%a)"
       INACTIVE_COUNT=$((INACTIVE_COUNT+1))
     fi
