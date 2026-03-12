@@ -80,7 +80,13 @@ trap 'rm -rf "$WORK"' EXIT
 SEP="════════════════════════════════════════════════════════════════════════"
 SUB="────────────────────────────────────────────────────────────────────────"
 
-section()    { printf "\n%s\n  %s\n%s\n" "$SEP" "$1" "$SEP"; }
+section() {
+  printf "\n%s\n  %s\n" "$SEP" "$1"
+  if [[ -n "${AUTHOR_LABEL:-}" ]]; then
+    printf "  Author: %s  |  %s → %s  |  %s\n" "$AUTHOR_LABEL" "$SINCE" "$UNTIL" "$REPO_NAME"
+  fi
+  printf "%s\n" "$SEP"
+}
 subsection() { printf "\n%s\n  %s\n%s\n" "$SUB" "$1" "$SUB"; }
 
 ###############################################################################
@@ -89,7 +95,7 @@ subsection() { printf "\n%s\n  %s\n%s\n" "$SUB" "$1" "$SUB"; }
 echo "$SEP"
 echo "  GIT AUDIT REPORT"
 echo "$SEP"
-printf "  %-30s %s\n" "Author:"           "$AUTHOR"
+printf "  %-30s %s\n" "Search filter:"    "$AUTHOR"
 printf "  %-30s %s\n" "Period:"           "$SINCE  →  $UNTIL"
 printf "  %-30s %s\n" "Repository:"       "$REPO_NAME"
 printf "  %-30s %s\n" "Repository path:"  "$REPO_ROOT"
@@ -112,10 +118,11 @@ echo "Collecting commit data (all branches)…"
 # ── 1. Raw commit data (tab-separated) ────────────────────────────────
 # Fields: 1=AuthorDateISO 2=CommitDateISO 3=ShortHash 4=FullHash
 #         5=ParentHashes  6=AuthorName    7=AuthorEmail 8=Subject
+#         9=CommitterName 10=CommitterEmail
 git log --all \
   --author="$AUTHOR" \
   --since="$BUF_S" --until="$BUF_U" \
-  --pretty=format:"%aI%x09%cI%x09%h%x09%H%x09%P%x09%aN%x09%aE%x09%s" \
+  --pretty=format:"%aI%x09%cI%x09%h%x09%H%x09%P%x09%aN%x09%aE%x09%s%x09%cN%x09%cE" \
   > "$WORK/raw.tsv" 2>/dev/null || true
 
 # ── 2. Per-commit numstat ─────────────────────────────────────────────
@@ -157,7 +164,7 @@ awk -F'\t' -v s="$SINCE" -v u="$UNTIL" \
   "$WORK/raw.tsv" > "$WORK/union.tsv"
 
 # ── 4. Enrich: join commits with their stats ─────────────────────────
-# Appends 3 fields → total 11 fields:  …|files|insertions|deletions
+# Appends 3 fields → total 13 fields:  …|files|insertions|deletions
 for src in ad cd union; do
   awk -F'\t' '
     NR==FNR { s[$1]=$2"\t"$3"\t"$4; next }
@@ -173,6 +180,18 @@ git log --all --source \
   > "$WORK/sources.tsv" 2>/dev/null || true
 
 echo "Data collection complete."
+
+# ── 6. Resolve author identity ────────────────────────────────────────
+# Extract all unique author identities (name <email>) from raw data
+AUTHOR_IDENTITIES=$(awk -F'\t' '{printf "%s <%s>\n",$6,$7}' "$WORK/raw.tsv" | sort | uniq -c | sort -rn)
+AUTHOR_FULL_NAME=$(echo "$AUTHOR_IDENTITIES" | head -1 | sed 's/^[[:space:]]*[0-9]*[[:space:]]*//' | sed 's/ <.*$//')
+AUTHOR_EMAIL=$(echo "$AUTHOR_IDENTITIES" | head -1 | sed 's/^.*<//' | sed 's/>$//')
+
+# Extract committer identities (may differ from author after rebase etc.)
+COMMITTER_IDENTITIES=$(awk -F'\t' '{printf "%s <%s>\n",$9,$10}' "$WORK/raw.tsv" | sort | uniq -c | sort -rn)
+
+# Build a display label for use in section headers
+AUTHOR_LABEL="$AUTHOR_FULL_NAME <$AUTHOR_EMAIL>"
 
 # ── Check for empty results ──────────────────────────────────────────
 N_AD=$(wc -l < "$WORK/ad.tsv")
@@ -211,7 +230,7 @@ MERGES=$(awk -F'\t' '$5 ~ / /' "$WORK/union.tsv" | wc -l)
 NON_MERGES=$((N_UNION - MERGES))
 
 read -r TOT_F TOT_I TOT_D < <(
-  awk -F'\t' '{f+=$9; i+=$10; d+=$11} END{printf "%d %d %d\n",f,i,d}' "$WORK/ad_e.tsv"
+  awk -F'\t' '{f+=$11; i+=$12; d+=$13} END{printf "%d %d %d\n",f,i,d}' "$WORK/ad_e.tsv"
 ) || true
 
 COVERAGE=$(awk "BEGIN{if($WORK_DAYS>0) printf \"%.1f%%\",$ACTIVE_AD/$WORK_DAYS*100; else print \"N/A\"}")
@@ -234,8 +253,20 @@ printf "  %-44s +%d / -%d\n" "Insertions / deletions:" "$TOT_I" "$TOT_D"
 printf "  %-44s %d\n"        "Net lines changed:"      "$((TOT_I - TOT_D))"
 printf "  %-44s %d\n"        "Total file modifications:" "$TOT_F"
 
-subsection "Author identities used"
-awk -F'\t' '{printf "  %s <%s>\n",$6,$7}' "$WORK/union.tsv" | sort -u
+subsection "Author identity"
+echo
+printf "  %-30s %s\n" "Full name:"     "$AUTHOR_FULL_NAME"
+printf "  %-30s %s\n" "Email:"         "$AUTHOR_EMAIL"
+echo
+echo "  All author identities found in commits:"
+echo "$AUTHOR_IDENTITIES" | while read -r cnt ident; do
+  printf "    %4s commits as  %s\n" "$cnt" "$ident"
+done
+echo
+echo "  Committer identities (may differ after rebase/merge):"
+echo "$COMMITTER_IDENTITIES" | while read -r cnt ident; do
+  printf "    %4s commits as  %s\n" "$cnt" "$ident"
+done
 
 ###############################################################################
 # 2. DAY-BY-DAY ACTIVITY (AuthorDate)
@@ -255,7 +286,7 @@ awk -F'\t' '{
   day = substr($1,1,10)
   time = substr($1,12,5)
   n[day]++
-  ins[day]+=$10; del[day]+=$11; files[day]+=$9
+  ins[day]+=$12; del[day]+=$13; files[day]+=$11
   if (!(day in tmin) || time < tmin[day]) tmin[day]=time
   if (!(day in tmax) || time > tmax[day]) tmax[day]=time
 } END {
@@ -304,7 +335,7 @@ awk -F'\t' '{
   day = substr($2,1,10)
   time = substr($2,12,5)
   n[day]++
-  ins[day]+=$10; del[day]+=$11; files[day]+=$9
+  ins[day]+=$12; del[day]+=$13; files[day]+=$11
   if (!(day in tmin) || time < tmin[day]) tmin[day]=time
   if (!(day in tmax) || time > tmax[day]) tmax[day]=time
 } END {
@@ -356,24 +387,24 @@ echo
 # Build per-day summary from AuthorDate
 awk -F'\t' '{
   day = substr($1,1,10)
-  n[day]++; ins[day]+=$10; del[day]+=$11; files[day]+=$9
+  n[day]++; ins[day]+=$12; del[day]+=$13; files[day]+=$11
 }' "$WORK/ad_e.tsv"
 
 # Build per-day summary from CommitDate
 awk -F'\t' '{
   day = substr($2,1,10)
-  n[day]++; ins[day]+=$10; del[day]+=$11; files[day]+=$9
+  n[day]++; ins[day]+=$12; del[day]+=$13; files[day]+=$11
 }' "$WORK/cd_e.tsv"
 
 # Build combined per-day data using awk on both files
 awk -F'\t' -v s="$SINCE" -v u="$UNTIL" '
   FILENAME==ARGV[1] {
     day = substr($1,1,10)
-    if (day>=s && day<=u) { ad_n[day]++; ad_ins[day]+=$10; ad_del[day]+=$11; ad_f[day]+=$9 }
+    if (day>=s && day<=u) { ad_n[day]++; ad_ins[day]+=$12; ad_del[day]+=$13; ad_f[day]+=$11 }
   }
   FILENAME==ARGV[2] {
     day = substr($2,1,10)
-    if (day>=s && day<=u) { cd_n[day]++; cd_ins[day]+=$10; cd_del[day]+=$11; cd_f[day]+=$9 }
+    if (day>=s && day<=u) { cd_n[day]++; cd_ins[day]+=$12; cd_del[day]+=$13; cd_f[day]+=$11 }
   }
   END {
     for (d in ad_n) days[d]=1
@@ -667,7 +698,7 @@ awk -F'\t' '{
   printf "  %-10s  %s %s  %s %s  %+6d  %+6d  %s\n", \
     $3, substr($1,1,10), substr($1,12,5), \
     substr($2,1,10), substr($2,12,5), \
-    $10, $11, $8
+    $12, $13, $8
 }' "$WORK/ad_e.tsv"
 
 ###############################################################################
