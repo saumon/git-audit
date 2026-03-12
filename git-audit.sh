@@ -237,21 +237,21 @@ COVERAGE=$(awk "BEGIN{if($WORK_DAYS>0) printf \"%.1f%%\",$ACTIVE_AD/$WORK_DAYS*1
 AVG_CPD=$(awk "BEGIN{if($ACTIVE_AD>0) printf \"%.1f\",$N_AD/$ACTIVE_AD; else print \"0\"}")
 
 echo
-printf "  %-44s %d\n" "Calendar days in range:"          "$TOTAL_DAYS"
-printf "  %-44s %d\n" "Working days (Mon–Fri):"           "$WORK_DAYS"
-printf "  %-44s %d\n" "Days with activity (AuthorDate):"  "$ACTIVE_AD"
-printf "  %-44s %d\n" "Days with activity (CommitDate):"  "$ACTIVE_CD"
+printf "  %-44s %s\n" "Calendar days in range:"          "$TOTAL_DAYS"
+printf "  %-44s %s\n" "Working days (Mon-Fri):"           "$WORK_DAYS"
+printf "  %-44s %s\n" "Days with activity (AuthorDate):"  "$ACTIVE_AD"
+printf "  %-44s %s\n" "Days with activity (CommitDate):"  "$ACTIVE_CD"
 printf "  %-44s %s\n" "Coverage (active / working days):" "$COVERAGE"
 echo
-printf "  %-44s %d\n" "Commits by AuthorDate in range:"   "$N_AD"
-printf "  %-44s %d\n" "Commits by CommitDate in range:"   "$N_CD"
-printf "  %-44s %d\n" "  ├─ Merge commits:"               "$MERGES"
-printf "  %-44s %d\n" "  └─ Non-merge commits:"           "$NON_MERGES"
+printf "  %-44s %s\n" "Commits by AuthorDate in range:"   "$N_AD"
+printf "  %-44s %s\n" "Commits by CommitDate in range:"   "$N_CD"
+printf "  %-44s %s\n" "    Merge commits:"                "$MERGES"
+printf "  %-44s %s\n" "    Non-merge commits:"            "$NON_MERGES"
 printf "  %-44s %s\n" "Avg commits / active day:"         "$AVG_CPD"
 echo
-printf "  %-44s +%d / -%d\n" "Insertions / deletions:" "$TOT_I" "$TOT_D"
-printf "  %-44s %d\n"        "Net lines changed:"      "$((TOT_I - TOT_D))"
-printf "  %-44s %d\n"        "Total file modifications:" "$TOT_F"
+printf "  %-44s %s\n" "Insertions / deletions:"           "+$TOT_I / -$TOT_D"
+printf "  %-44s %s\n" "Net lines changed:"                "$((TOT_I - TOT_D))"
+printf "  %-44s %s\n" "Total file modifications:"         "$TOT_F"
 
 subsection "Author identity"
 echo
